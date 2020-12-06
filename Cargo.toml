@@ -1,0 +1,10 @@
+[package]
+name = "writekit"
+description = "A toolkit for distraction-free writing in the terminal."
+version = "0.0.1"
+authors = ["Evan Purcer <ep@e2.gg>"]
+edition = "2018"
+
+[dependencies]
+clap = "3.0.0-beta.2"
+notify = "4.0.15"

@@ -1,0 +1,7 @@
+= writekit
+A toolkit for distraction-free writing in the terminal.
+
+== build
+```
+cargo watch -x build  # `cargo install cargo-watch` first if necessary
+```
