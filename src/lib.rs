@@ -1,6 +1,6 @@
 use std::env;
 use std::error;
-use std::ffi::OsStr;
+use std::fs::File;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -35,92 +35,74 @@ impl Options {
     }
 }
 
+enum Conversion {
+    MarkdownToHtml,
+    AsciiDocToHtml,
+    HtmlToPdf,
+    HtmlToPng,
+}
+
 pub fn handle_write(path: PathBuf, verbose: bool, quiet: bool) -> Result<()> {
-    match path.extension() {
-        Some(ext) => match ext.to_str() {
-            Some("adoc") => adoc_to_html(&path, verbose, quiet)?,
+    if let Some(ext) = path.extension() {
+        match ext.to_str() {
+            Some("md") => {
+                let mut outhtml = path.clone();
+                outhtml.set_extension("html");
+                convert(Conversion::MarkdownToHtml, &path, &outhtml, verbose, quiet)?;
+            }
+            Some("adoc") => {
+                let mut outhtml = path.clone();
+                outhtml.set_extension("html");
+                convert(Conversion::AsciiDocToHtml, &path, &outhtml, verbose, quiet)?;
+            }
             Some("html") => {
-                // TODO parallelize
-                html_to_pdf(&path, verbose, quiet)?;
-                html_to_png(&path, verbose, quiet)?;
+                let mut outpdf = path.clone();
+                outpdf.set_extension("pdf");
+                convert(Conversion::HtmlToPdf, &path, &outpdf, verbose, quiet)?;
+
+                let mut outpng = path.clone();
+                outpng.set_extension("png");
+                convert(Conversion::HtmlToPng, &path, &outpng, verbose, quiet)?;
             }
             _ => (),
-        },
-        None => (),
-    };
+        }
+    }
     Ok(())
 }
 
-fn adoc_to_html(in_path: &PathBuf, verbose: bool, quiet: bool) -> Result<()> {
+fn convert(
+    conversion: Conversion,
+    input: &PathBuf,
+    output: &PathBuf,
+    verbose: bool,
+    quiet: bool,
+) -> Result<()> {
     if !quiet {
-        let mut out_path = in_path.clone();
-
-        out_path.set_extension("html");
-
-        // TODO better error handling instead of unwrap below?
-        println!(
-            "{} -> {}",
-            in_path.file_name().unwrap().to_string_lossy(),
-            out_path.file_name().unwrap().to_string_lossy(),
-        );
+        println!("{} -> {}", input.display(), output.display());
     }
 
-    let output = Command::new("asciidoctor").arg(in_path).output()?;
-
-    if verbose {
-        println!("{}", String::from_utf8(output.stdout)?);
-    }
-
-    Ok(())
-}
-
-fn html_to_pdf(in_path: &PathBuf, verbose: bool, quiet: bool) -> Result<()> {
-    let mut out_path = in_path.clone();
-
-    out_path.set_extension("pdf");
-
-    if !quiet {
-        // TODO better error handling instead of unwrap below?
-        println!(
-            "{} -> {}",
-            in_path.file_name().unwrap().to_string_lossy(),
-            out_path.file_name().unwrap().to_string_lossy(),
-        );
-    }
-
-    let output = Command::new("wkhtmltopdf")
-        .arg(in_path)
-        .arg(out_path)
-        .output()?;
-
-    if verbose {
-        println!("{}", String::from_utf8(output.stdout)?);
-    }
-
-    Ok(())
-}
-
-fn html_to_png(in_path: &PathBuf, verbose: bool, quiet: bool) -> Result<()> {
-    let mut out_path = in_path.clone();
-
-    out_path.set_extension("png");
-
-    if !quiet {
-        // TODO better error handling instead of unwrap below?
-        println!(
-            "{} -> {}",
-            in_path.file_name().unwrap().to_string_lossy(),
-            out_path.file_name().unwrap().to_string_lossy(),
-        );
-    }
-
-    let output = Command::new("wkhtmltoimage")
-        .arg(in_path)
-        .arg(out_path)
-        .output()?;
-
-    if verbose {
-        println!("{}", String::from_utf8(output.stdout)?);
+    match conversion {
+        Conversion::MarkdownToHtml => {
+            Command::new("pandoc")
+                .arg(input)
+                .arg("-o")
+                .arg(output)
+                .spawn()?;
+        }
+        Conversion::AsciiDocToHtml => {
+            Command::new("asciidoctor").arg(input).spawn()?;
+        }
+        Conversion::HtmlToPdf | Conversion::HtmlToPng => {
+            Command::new(match conversion {
+                Conversion::HtmlToPdf => "wkhtmltopdf",
+                _ => "wkhtmltoimage",
+            })
+            .arg("--log-level")
+            .arg(if verbose { "info" } else { "none" })
+            .arg(input)
+            .arg(output)
+            .spawn()?;
+        }
     }
 
     Ok(())

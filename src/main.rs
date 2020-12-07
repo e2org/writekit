@@ -3,7 +3,6 @@ extern crate notify;
 
 use std::env;
 use std::sync::mpsc::channel;
-use std::thread::sleep;
 use std::time::Duration;
 
 use clap::clap_app;
