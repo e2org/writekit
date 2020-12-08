@@ -60,7 +60,7 @@ enum Converter {
     WkHtmlToImage,
 }
 
-pub fn handle_write(path: PathBuf, verbose: bool, quiet: bool) -> Result<()> {
+pub fn handle_write(path: &PathBuf, verbose: bool, quiet: bool) -> Result<()> {
     if let Some(ext) = path.extension() {
         match ext.to_str() {
             Some("md") => {
