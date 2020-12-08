@@ -1,7 +1,8 @@
 use std::env;
 use std::error;
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
 
 // Standard "error-boxing" Result type.
 type Result<T> = ::std::result::Result<T, Box<dyn error::Error>>;
@@ -53,21 +54,34 @@ pub fn handle_write(path: PathBuf, verbose: bool, quiet: bool) -> Result<()> {
             Some("md") => {
                 let mut outhtml = path.clone();
                 outhtml.set_extension("html");
-                convert(Converter::Pandoc, &path, &outhtml, verbose, quiet)?;
+                let proc = convert(Converter::Pandoc, &path, &outhtml, verbose, quiet)?;
+
+                if verbose {
+                    print_stdout_stderr(Converter::WkHtmlToPdf, proc);
+                }
             }
             Some("adoc") => {
                 let mut outhtml = path.clone();
                 outhtml.set_extension("html");
-                convert(Converter::Asciidoctor, &path, &outhtml, verbose, quiet)?;
+                let proc = convert(Converter::Asciidoctor, &path, &outhtml, verbose, quiet)?;
+
+                if verbose {
+                    print_stdout_stderr(Converter::WkHtmlToPdf, proc);
+                }
             }
             Some("html") => {
                 let mut outpdf = path.clone();
                 outpdf.set_extension("pdf");
-                convert(Converter::WkHtmlToPdf, &path, &outpdf, verbose, quiet)?;
+                let proc_pdf = convert(Converter::WkHtmlToPdf, &path, &outpdf, verbose, quiet)?;
 
                 let mut outpng = path.clone();
                 outpng.set_extension("png");
-                convert(Converter::WkHtmlToImage, &path, &outpng, verbose, quiet)?;
+                let proc_png = convert(Converter::WkHtmlToImage, &path, &outpng, verbose, quiet)?;
+
+                if verbose {
+                    print_stdout_stderr(Converter::WkHtmlToPdf, proc_pdf);
+                    print_stdout_stderr(Converter::WkHtmlToImage, proc_png);
+                }
             }
             _ => (),
         }
@@ -81,24 +95,34 @@ fn convert(
     output: &PathBuf,
     verbose: bool,
     quiet: bool,
-) -> Result<()> {
+) -> Result<Child> {
     if !quiet {
         println!("{} -> {}", input.display(), output.display());
     }
 
+    let mut command = Command::new(converter.to_string());
+
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    let proc: Child;
+
     match converter {
         Converter::Pandoc => {
-            Command::new(converter.to_string())
+            proc = command
+                .arg(if verbose { "--verbose" } else { "" })
                 .arg(input)
                 .arg("-o")
                 .arg(output)
                 .spawn()?;
         }
         Converter::Asciidoctor => {
-            Command::new(converter.to_string()).arg(input).spawn()?;
+            proc = command
+                .arg(if verbose { "--verbose" } else { "" })
+                .arg(input)
+                .spawn()?;
         }
         Converter::WkHtmlToPdf | Converter::WkHtmlToImage => {
-            Command::new(converter.to_string())
+            proc = command
                 .arg("--log-level")
                 .arg(if verbose { "info" } else { "none" })
                 .arg(input)
@@ -107,5 +131,21 @@ fn convert(
         }
     }
 
-    Ok(())
+    Ok(proc)
+}
+
+fn print_stdout_stderr(converter: Converter, proc: Child) {
+    BufReader::new(proc.stdout.unwrap())
+        .lines()
+        .for_each(|line| {
+            println!("...{}[stdout]...", converter.to_string());
+            println!("{}", line.unwrap());
+        });
+
+    BufReader::new(proc.stderr.unwrap())
+        .lines()
+        .for_each(|line| {
+            println!("...{}[stderr]...", converter.to_string());
+            println!("{}", line.unwrap());
+        });
 }
