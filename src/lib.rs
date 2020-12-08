@@ -35,14 +35,14 @@ impl Args {
         // If none provided, set to current directory (in which script was invoked).
         let target = match matches.value_of("TARGET") {
             Some(arg) => [arg].iter().collect(), // build PathBuf from arg string
-            None => env::current_dir().unwrap(), // use current directory
+            None => env::current_dir()?,         // use current directory if availalbe
         };
 
-        Options {
+        Ok(Args {
             target,
             verbose,
             quiet,
-        }
+        })
     }
 }
 
@@ -147,17 +147,29 @@ fn convert(
 }
 
 fn print_stdout_stderr(converter: Converter, proc: Child) {
-    BufReader::new(proc.stdout.unwrap())
-        .lines()
-        .for_each(|line| {
-            println!("...{}[stdout]...", converter.to_string());
-            println!("{}", line.unwrap());
+    if let Some(stdout) = proc.stdout {
+        BufReader::new(stdout).lines().for_each(|line| {
+            println!(". . . {} [stdout] . . .", converter.to_string());
+            println!(
+                "{}",
+                line.unwrap_or_else(|_| format!(
+                    "error: failed to process stdout for {}",
+                    converter.to_string()
+                ))
+            );
         });
+    }
 
-    BufReader::new(proc.stderr.unwrap())
-        .lines()
-        .for_each(|line| {
-            println!("...{}[stderr]...", converter.to_string());
-            println!("{}", line.unwrap());
+    if let Some(stderr) = proc.stderr {
+        BufReader::new(stderr).lines().for_each(|line| {
+            println!(". . . {} [stderr] . . .", converter.to_string());
+            println!(
+                "{}",
+                line.unwrap_or_else(|_| format!(
+                    "error: failed to process stderr for {}",
+                    converter.to_string()
+                ))
+            );
         });
+    }
 }

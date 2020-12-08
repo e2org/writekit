@@ -9,14 +9,14 @@ use clap::clap_app;
 use notify::DebouncedEvent::{Create, Write};
 use notify::{watcher, RecursiveMode, Watcher};
 
-use writekit::{handle_write, Options};
+use writekit::{handle_write, Args};
 
 const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 const DESCRIPTION: &'static str = env!("CARGO_PKG_DESCRIPTION");
 const AUTHOR: &'static str = env!("CARGO_PKG_AUTHORS");
 
 fn main() {
-    let opt = Options::new(
+    let args = Args::new(
         clap_app!(writekit =>
             (version: VERSION)
             (author: AUTHOR)
@@ -26,10 +26,11 @@ fn main() {
             (@arg quiet: --quiet -q)
         )
         .get_matches(),
-    );
+    )
+    .unwrap_or_else(|error| panic!("error: {:?}", error));
 
-    if opt.verbose {
-        println!("{:#?}", opt);
+    if args.verbose {
+        println!("{}", args);
     }
 
     // https://docs.rs/notify/4.0.10/notify/#default-debounced-api
@@ -41,7 +42,7 @@ fn main() {
     // Add a path to be watched. All files and directories at that path and
     // below will be monitored for changes.
     watcher
-        .watch(opt.target.clone(), RecursiveMode::Recursive)
+        .watch(args.target.clone(), RecursiveMode::Recursive)
         .unwrap();
 
     loop {
@@ -55,7 +56,7 @@ fn main() {
                             .unwrap();
 
                         // Generate all downstream files from changed file:
-                        match handle_write(path, opt.verbose, opt.quiet) {
+                        match handle_write(path, args.verbose, args.quiet) {
                             Ok(()) => (),
                             Err(error) => eprintln!("error: {:?}", error),
                         };
