@@ -1,11 +1,9 @@
 use std::env;
 use std::error;
-use std::fs::File;
 use std::path::PathBuf;
 use std::process::Command;
 
-use clap::ArgMatches;
-
+// Standard "error-boxing" Result type.
 type Result<T> = ::std::result::Result<T, Box<dyn error::Error>>;
 
 #[derive(Debug)]
@@ -16,7 +14,7 @@ pub struct Options {
 }
 
 impl Options {
-    pub fn new(matches: ArgMatches) -> Options {
+    pub fn new(matches: clap::ArgMatches) -> Options {
         let verbose = matches.is_present("verbose");
         let quiet = matches.is_present("quiet");
 
@@ -35,11 +33,18 @@ impl Options {
     }
 }
 
-enum Conversion {
-    MarkdownToHtml,
-    AsciiDocToHtml,
-    HtmlToPdf,
-    HtmlToPng,
+// Use strum to allow Converter enum to map to conversion CLI commands:
+// https://docs.rs/strum/0.20.0/strum/
+#[derive(strum_macros::Display)]
+enum Converter {
+    #[strum(serialize = "pandoc")]
+    Pandoc,
+    #[strum(serialize = "asciidoctor")]
+    Asciidoctor,
+    #[strum(serialize = "wkhtmltopdf")]
+    WkHtmlToPdf,
+    #[strum(serialize = "wkhtmltoimage")]
+    WkHtmlToImage,
 }
 
 pub fn handle_write(path: PathBuf, verbose: bool, quiet: bool) -> Result<()> {
@@ -48,21 +53,21 @@ pub fn handle_write(path: PathBuf, verbose: bool, quiet: bool) -> Result<()> {
             Some("md") => {
                 let mut outhtml = path.clone();
                 outhtml.set_extension("html");
-                convert(Conversion::MarkdownToHtml, &path, &outhtml, verbose, quiet)?;
+                convert(Converter::Pandoc, &path, &outhtml, verbose, quiet)?;
             }
             Some("adoc") => {
                 let mut outhtml = path.clone();
                 outhtml.set_extension("html");
-                convert(Conversion::AsciiDocToHtml, &path, &outhtml, verbose, quiet)?;
+                convert(Converter::Asciidoctor, &path, &outhtml, verbose, quiet)?;
             }
             Some("html") => {
                 let mut outpdf = path.clone();
                 outpdf.set_extension("pdf");
-                convert(Conversion::HtmlToPdf, &path, &outpdf, verbose, quiet)?;
+                convert(Converter::WkHtmlToPdf, &path, &outpdf, verbose, quiet)?;
 
                 let mut outpng = path.clone();
                 outpng.set_extension("png");
-                convert(Conversion::HtmlToPng, &path, &outpng, verbose, quiet)?;
+                convert(Converter::WkHtmlToImage, &path, &outpng, verbose, quiet)?;
             }
             _ => (),
         }
@@ -71,7 +76,7 @@ pub fn handle_write(path: PathBuf, verbose: bool, quiet: bool) -> Result<()> {
 }
 
 fn convert(
-    conversion: Conversion,
+    converter: Converter,
     input: &PathBuf,
     output: &PathBuf,
     verbose: bool,
@@ -81,27 +86,24 @@ fn convert(
         println!("{} -> {}", input.display(), output.display());
     }
 
-    match conversion {
-        Conversion::MarkdownToHtml => {
-            Command::new("pandoc")
+    match converter {
+        Converter::Pandoc => {
+            Command::new(converter.to_string())
                 .arg(input)
                 .arg("-o")
                 .arg(output)
                 .spawn()?;
         }
-        Conversion::AsciiDocToHtml => {
-            Command::new("asciidoctor").arg(input).spawn()?;
+        Converter::Asciidoctor => {
+            Command::new(converter.to_string()).arg(input).spawn()?;
         }
-        Conversion::HtmlToPdf | Conversion::HtmlToPng => {
-            Command::new(match conversion {
-                Conversion::HtmlToPdf => "wkhtmltopdf",
-                _ => "wkhtmltoimage",
-            })
-            .arg("--log-level")
-            .arg(if verbose { "info" } else { "none" })
-            .arg(input)
-            .arg(output)
-            .spawn()?;
+        Converter::WkHtmlToPdf | Converter::WkHtmlToImage => {
+            Command::new(converter.to_string())
+                .arg("--log-level")
+                .arg(if verbose { "info" } else { "none" })
+                .arg(input)
+                .arg(output)
+                .spawn()?;
         }
     }
 

@@ -8,3 +8,5 @@ edition = "2018"
 [dependencies]
 clap = "3.0.0-beta.2"
 notify = "4.0.15"
+strum = "0.20.0"
+strum_macros = "0.20.1"
