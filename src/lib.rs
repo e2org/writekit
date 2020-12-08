@@ -1,5 +1,6 @@
 use std::env;
 use std::error;
+use std::fmt;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -7,15 +8,26 @@ use std::process::{Child, Command, Stdio};
 // Standard "error-boxing" Result type.
 type Result<T> = ::std::result::Result<T, Box<dyn error::Error>>;
 
-#[derive(Debug)]
-pub struct Options {
+pub struct Args {
     pub target: PathBuf,
     pub verbose: bool,
     pub quiet: bool,
 }
 
-impl Options {
-    pub fn new(matches: clap::ArgMatches) -> Options {
+impl fmt::Display for Args {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "options: target='{}' verbose={} quiet={}",
+            self.target.display(),
+            self.verbose,
+            self.quiet
+        )
+    }
+}
+
+impl Args {
+    pub fn new(matches: clap::ArgMatches) -> Result<Args> {
         let verbose = matches.is_present("verbose");
         let quiet = matches.is_present("quiet");
 
