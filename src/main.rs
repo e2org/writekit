@@ -64,14 +64,15 @@ fn main() {
     loop {
         match receiver.recv() {
             Ok(event) => {
+                if args.verbose {
+                    println!("[notify] {:?}", event);
+                }
+
                 match event {
                     Create(path) | Write(path) => {
-                        // TODO why do changes to adoc not result in html change detected?
-
                         // Generate all downstream files from changed file:
                         handle_write(&path, args.verbose, args.quiet)
                             .unwrap_or_else(|error| eprintln!("error: {:?}", error));
-
                         // New file may have been created -- ensure it's watched:
                         watcher
                             .watch(path, RecursiveMode::Recursive)

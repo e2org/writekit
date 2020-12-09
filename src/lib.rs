@@ -116,30 +116,30 @@ fn convert(
 
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
+    match converter {
+        Converter::Pandoc | Converter::Asciidoctor => {
+            if verbose {
+                command.arg("--verbose");
+            }
+        }
+        Converter::WkHtmlToPdf | Converter::WkHtmlToImage => {
+            if !verbose {
+                command.arg("--log-level").arg("none");
+            }
+        }
+    }
+
     let proc: Child;
 
     match converter {
         Converter::Pandoc => {
-            proc = command
-                .arg(if verbose { "--verbose" } else { "" })
-                .arg(input)
-                .arg("-o")
-                .arg(output)
-                .spawn()?;
+            proc = command.arg(input).arg("-o").arg(output).spawn()?;
         }
         Converter::Asciidoctor => {
-            proc = command
-                .arg(if verbose { "--verbose" } else { "" })
-                .arg(input)
-                .spawn()?;
+            proc = command.arg(input).spawn()?;
         }
         Converter::WkHtmlToPdf | Converter::WkHtmlToImage => {
-            proc = command
-                .arg("--log-level")
-                .arg(if verbose { "info" } else { "none" })
-                .arg(input)
-                .arg(output)
-                .spawn()?;
+            proc = command.arg(input).arg(output).spawn()?;
         }
     }
 
