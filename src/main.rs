@@ -6,6 +6,7 @@ use std::sync::mpsc::channel;
 use std::time::Duration;
 
 use clap::clap_app;
+use indicatif::ProgressBar;
 use notify::DebouncedEvent::{Create, Write};
 use notify::{watcher, RecursiveMode, Watcher};
 
@@ -28,6 +29,7 @@ fn main() {
             // Positional argument:
             (@arg TARGET: "directory or file to watch for changes")
             // Boolean arguments (flags):
+            (@arg display: --display -d)
             (@arg verbose: --verbose -v)
             (@arg quiet: --quiet -q)
         )
@@ -61,7 +63,14 @@ fn main() {
         .watch(args.target, RecursiveMode::Recursive)
         .unwrap_or_else(|error| panic!("error: {:?}", error));
 
+    // TODO progress bar - auto adjust length to match last process duration
+    // TODO progress bar - remove numbers at end of display
+    let mut loading = ProgressBar::new(100);
+
     loop {
+        if loading.is_finished() {
+            loading = ProgressBar::new(100);
+        }
         match receiver.recv() {
             Ok(event) => {
                 if args.verbose {
@@ -71,7 +80,7 @@ fn main() {
                 match event {
                     Create(path) | Write(path) => {
                         // Generate all downstream files from changed file:
-                        handle_write(&path, args.verbose, args.quiet)
+                        handle_write(&path, &loading, args.display, args.verbose, args.quiet)
                             .unwrap_or_else(|error| eprintln!("error: {:?}", error));
                         // New file may have been created -- ensure it's watched:
                         watcher

@@ -4,12 +4,17 @@ use std::fmt;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::thread::sleep;
+use std::time::Duration;
+
+use indicatif::ProgressBar;
 
 // Standard "error-boxing" Result type.
 type Result<T> = ::std::result::Result<T, Box<dyn error::Error>>;
 
 pub struct Args {
     pub target: PathBuf,
+    pub display: bool,
     pub verbose: bool,
     pub quiet: bool,
 }
@@ -18,8 +23,9 @@ impl fmt::Display for Args {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "options: target='{}' verbose={} quiet={}",
+            "options: target='{}' display={} verbose={} quiet={}",
             self.target.display(),
+            self.display,
             self.verbose,
             self.quiet
         )
@@ -28,6 +34,7 @@ impl fmt::Display for Args {
 
 impl Args {
     pub fn new(matches: clap::ArgMatches) -> Result<Args> {
+        let display = matches.is_present("display");
         let verbose = matches.is_present("verbose");
         let quiet = matches.is_present("quiet");
 
@@ -35,11 +42,12 @@ impl Args {
         // If none provided, set to current directory (in which script was invoked).
         let target = match matches.value_of("TARGET") {
             Some(arg) => [arg].iter().collect(), // build PathBuf from arg string
-            None => env::current_dir()?,         // use current directory if availalbe
+            None => env::current_dir()?,         // use current directory if available
         };
 
         Ok(Args {
             target,
+            display,
             verbose,
             quiet,
         })
@@ -60,39 +68,82 @@ enum Converter {
     WkHtmlToImage,
 }
 
-pub fn handle_write(path: &PathBuf, verbose: bool, quiet: bool) -> Result<()> {
+pub fn handle_write(
+    path: &PathBuf,
+    loading: &ProgressBar,
+    display: bool,
+    verbose: bool,
+    quiet: bool,
+) -> Result<()> {
     if let Some(ext) = path.extension() {
         match ext.to_str() {
             Some("md") => {
                 let mut outhtml = path.clone();
                 outhtml.set_extension("html");
-                let proc = convert(Converter::Pandoc, &path, &outhtml, verbose, quiet)?;
-
-                if verbose {
-                    print_stdout_stderr(Converter::WkHtmlToPdf, proc);
-                }
+                handle_proc(
+                    convert(Converter::Pandoc, &path, &outhtml, display, verbose, quiet)?,
+                    Converter::Pandoc,
+                    loading,
+                    verbose,
+                    quiet,
+                );
             }
             Some("adoc") => {
                 let mut outhtml = path.clone();
                 outhtml.set_extension("html");
-                let proc = convert(Converter::Asciidoctor, &path, &outhtml, verbose, quiet)?;
-
-                if verbose {
-                    print_stdout_stderr(Converter::WkHtmlToPdf, proc);
-                }
+                handle_proc(
+                    convert(
+                        Converter::Asciidoctor,
+                        &path,
+                        &outhtml,
+                        display,
+                        verbose,
+                        quiet,
+                    )?,
+                    Converter::Asciidoctor,
+                    loading,
+                    verbose,
+                    quiet,
+                );
             }
             Some("html") => {
                 let mut outpdf = path.clone();
                 outpdf.set_extension("pdf");
-                let proc_pdf = convert(Converter::WkHtmlToPdf, &path, &outpdf, verbose, quiet)?;
+                let proc_pdf = convert(
+                    Converter::WkHtmlToPdf,
+                    &path,
+                    &outpdf,
+                    display,
+                    verbose,
+                    quiet,
+                )?;
 
                 let mut outpng = path.clone();
                 outpng.set_extension("png");
-                let proc_png = convert(Converter::WkHtmlToImage, &path, &outpng, verbose, quiet)?;
+                let proc_png = convert(
+                    Converter::WkHtmlToImage,
+                    &path,
+                    &outpng,
+                    display,
+                    verbose,
+                    quiet,
+                )?;
 
-                if verbose {
-                    print_stdout_stderr(Converter::WkHtmlToPdf, proc_pdf);
-                    print_stdout_stderr(Converter::WkHtmlToImage, proc_png);
+                if !quiet && !display {
+                    // don't overwrite png convert log with loading bar:
+                    println!("");
+                }
+
+                handle_proc(proc_pdf, Converter::WkHtmlToPdf, loading, verbose, quiet);
+                handle_proc(proc_png, Converter::WkHtmlToImage, loading, verbose, quiet);
+            }
+            Some("png") => {
+                if !quiet {
+                    loading.finish();
+
+                    if display {
+                        Command::new("imgcat").arg(&path).spawn()?;
+                    }
                 }
             }
             _ => (),
@@ -101,14 +152,62 @@ pub fn handle_write(path: &PathBuf, verbose: bool, quiet: bool) -> Result<()> {
     Ok(())
 }
 
+fn handle_proc(
+    mut proc: Child,
+    converter: Converter,
+    loading: &ProgressBar,
+    verbose: bool,
+    quiet: bool,
+) {
+    if !quiet {
+        let delay = Duration::from_millis(100);
+        loop {
+            loading.inc(1);
+            if let Ok(Some(_status)) = &proc.try_wait() {
+                break;
+            }
+            sleep(delay);
+        }
+
+        if verbose {
+            if let Some(stdout) = proc.stdout {
+                BufReader::new(stdout).lines().for_each(|line| {
+                    println!(". . . {} [stdout] . . .", converter.to_string());
+                    println!(
+                        "{}",
+                        line.unwrap_or_else(|_| format!(
+                            "error: failed to process stdout for {}",
+                            converter.to_string()
+                        ))
+                    );
+                });
+            }
+
+            if let Some(stderr) = proc.stderr {
+                BufReader::new(stderr).lines().for_each(|line| {
+                    println!(". . . {} [stderr] . . .", converter.to_string());
+                    println!(
+                        "{}",
+                        line.unwrap_or_else(|_| format!(
+                            "error: failed to process stderr for {}",
+                            converter.to_string()
+                        ))
+                    );
+                });
+            }
+        }
+    }
+}
+
 fn convert(
     converter: Converter,
     input: &PathBuf,
     output: &PathBuf,
+    display: bool,
     verbose: bool,
     quiet: bool,
 ) -> Result<Child> {
-    if !quiet {
+    if !quiet && !display {
         println!("{} -> {}", input.display(), output.display());
     }
 
@@ -144,32 +243,4 @@ fn convert(
     }
 
     Ok(proc)
-}
-
-fn print_stdout_stderr(converter: Converter, proc: Child) {
-    if let Some(stdout) = proc.stdout {
-        BufReader::new(stdout).lines().for_each(|line| {
-            println!(". . . {} [stdout] . . .", converter.to_string());
-            println!(
-                "{}",
-                line.unwrap_or_else(|_| format!(
-                    "error: failed to process stdout for {}",
-                    converter.to_string()
-                ))
-            );
-        });
-    }
-
-    if let Some(stderr) = proc.stderr {
-        BufReader::new(stderr).lines().for_each(|line| {
-            println!(". . . {} [stderr] . . .", converter.to_string());
-            println!(
-                "{}",
-                line.unwrap_or_else(|_| format!(
-                    "error: failed to process stderr for {}",
-                    converter.to_string()
-                ))
-            );
-        });
-    }
 }
