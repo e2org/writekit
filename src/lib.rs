@@ -71,6 +71,7 @@ enum Converter {
 pub fn handle_write(
     path: &PathBuf,
     loading: &ProgressBar,
+    eta: &Duration,
     display: bool,
     verbose: bool,
     quiet: bool,
@@ -84,6 +85,7 @@ pub fn handle_write(
                     convert(Converter::Pandoc, &path, &outhtml, display, verbose, quiet)?,
                     Converter::Pandoc,
                     loading,
+                    eta,
                     verbose,
                     quiet,
                 );
@@ -102,6 +104,7 @@ pub fn handle_write(
                     )?,
                     Converter::Asciidoctor,
                     loading,
+                    eta,
                     verbose,
                     quiet,
                 );
@@ -134,8 +137,22 @@ pub fn handle_write(
                     println!("");
                 }
 
-                handle_proc(proc_pdf, Converter::WkHtmlToPdf, loading, verbose, quiet);
-                handle_proc(proc_png, Converter::WkHtmlToImage, loading, verbose, quiet);
+                handle_proc(
+                    proc_pdf,
+                    Converter::WkHtmlToPdf,
+                    loading,
+                    eta,
+                    verbose,
+                    quiet,
+                );
+                handle_proc(
+                    proc_png,
+                    Converter::WkHtmlToImage,
+                    loading,
+                    eta,
+                    verbose,
+                    quiet,
+                );
             }
             Some("png") => {
                 if !quiet {
@@ -156,13 +173,22 @@ fn handle_proc(
     mut proc: Child,
     converter: Converter,
     loading: &ProgressBar,
+    eta: &Duration,
     verbose: bool,
     quiet: bool,
 ) {
     if !quiet {
-        let delay = Duration::from_millis(100);
+        let eta_ms = eta.as_millis();
+        let delay = Duration::from_millis(if eta_ms > 0 {
+            // 0.8 - adjust by factor based on observation
+            ((eta_ms as f64) / 100.0 * 0.8).round() as u64
+        } else {
+            100
+        });
         loop {
-            loading.inc(1);
+            if loading.position() < 100 {
+                loading.inc(1);
+            }
             if let Ok(Some(_status)) = &proc.try_wait() {
                 break;
             }

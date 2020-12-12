@@ -3,7 +3,7 @@ extern crate notify;
 
 use std::env;
 use std::sync::mpsc::channel;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use clap::clap_app;
 use indicatif::ProgressBar;
@@ -63,9 +63,11 @@ fn main() {
         .watch(args.target, RecursiveMode::Recursive)
         .unwrap_or_else(|error| panic!("error: {:?}", error));
 
-    // TODO progress bar - auto adjust length to match last process duration
-    // TODO progress bar - remove numbers at end of display
     let mut loading = ProgressBar::new(100);
+    let mut start = Instant::now();
+    let mut eta = start.elapsed();
+    let mut eta_ms: u128;
+    let mut elapsed_ms: u128;
 
     loop {
         if loading.is_finished() {
@@ -79,9 +81,38 @@ fn main() {
 
                 match event {
                     Create(path) | Write(path) => {
+                        // Auto-adjust progress bar duration to match build times:
+                        if let Some(ext) = path.extension() {
+                            match ext.to_str() {
+                                Some("md") | Some("adoc") => {
+                                    start = Instant::now();
+                                }
+                                Some("png") => {
+                                    eta_ms = eta.as_millis();
+                                    if eta_ms > 0 {
+                                        elapsed_ms = start.elapsed().as_millis();
+                                        eta = Duration::from_millis(
+                                            (((eta_ms + elapsed_ms) as f64) / 2.0).round() as u64, // avg
+                                        );
+                                    } else {
+                                        eta = start.elapsed();
+                                    }
+                                }
+                                _ => (),
+                            }
+                        }
+
                         // Generate all downstream files from changed file:
-                        handle_write(&path, &loading, args.display, args.verbose, args.quiet)
-                            .unwrap_or_else(|error| eprintln!("error: {:?}", error));
+                        handle_write(
+                            &path,
+                            &loading,
+                            &eta,
+                            args.display,
+                            args.verbose,
+                            args.quiet,
+                        )
+                        .unwrap_or_else(|error| eprintln!("error: {:?}", error));
+
                         // New file may have been created -- ensure it's watched:
                         watcher
                             .watch(path, RecursiveMode::Recursive)
