@@ -6,7 +6,7 @@ use std::sync::mpsc::channel;
 use std::time::{Duration, Instant};
 
 use clap::clap_app;
-use indicatif::ProgressBar;
+use indicatif::{ProgressBar, ProgressStyle};
 use notify::DebouncedEvent::{Create, Write};
 use notify::{watcher, RecursiveMode, Watcher};
 
@@ -63,7 +63,11 @@ fn main() {
         .watch(args.target, RecursiveMode::Recursive)
         .unwrap_or_else(|error| panic!("error: {:?}", error));
 
-    let mut loading = ProgressBar::new(100);
+    let loading = ProgressBar::new(100).with_style(
+        ProgressStyle::default_bar()
+            .template("{wide_bar:.cyan/blue}")
+            .progress_chars("::."),
+    );
     let mut start = Instant::now();
     let mut eta = start.elapsed();
     let mut eta_ms: u128;
@@ -71,7 +75,7 @@ fn main() {
 
     loop {
         if loading.is_finished() {
-            loading = ProgressBar::new(100);
+            loading.reset();
         }
         match receiver.recv() {
             Ok(event) => {
