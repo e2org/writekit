@@ -17,8 +17,7 @@ const DESCRIPTION: &'static str = env!("CARGO_PKG_DESCRIPTION");
 const AUTHOR: &'static str = env!("CARGO_PKG_AUTHORS");
 
 fn main() {
-    // Parse arguments from command line via Clap:
-    // https://github.com/clap-rs/clap
+    // Parse arguments from command line via https://github.com/clap-rs/clap
     let args = Args::new(
         clap_app!(writekit =>
             // Use config values from Cargo.toml:
@@ -46,15 +45,15 @@ fn main() {
         println!("{}", args);
     }
 
-    // Watch for file changes in target directory via Notify:
+    // Watch for file changes in target directory via https://github.com/notify-rs/notify
     // https://docs.rs/notify/4.0.10/notify/#default-debounced-api
 
     // Create a channel to receive the events:
-    let (transmitter, receiver) = channel();
+    let (tx, rx) = channel();
 
     // Create a watcher object, delivering debounced events:
     // (the notification back-end is selected based on the platform)
-    let mut watcher = watcher(transmitter, Duration::from_secs(1)).unwrap();
+    let mut watcher = watcher(tx, Duration::from_secs(1)).unwrap();
 
     // Add a path to be watched:
     // (all files and directories at that path and below will be monitored)
@@ -64,10 +63,10 @@ fn main() {
 
     let mut loading = Loading::new();
     loop {
-        match receiver.recv() {
+        match rx.recv() {
             Ok(event) => {
                 if args.verbose {
-                    println!("[notify] {:?}", event);
+                    println!("[notify] {:?}", event); // diagnostic
                 }
 
                 match event {

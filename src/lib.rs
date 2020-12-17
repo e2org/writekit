@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use indicatif::{ProgressBar, ProgressStyle};
 
-// Standard "error-boxing" Result type.
+// Standard "error-boxing" Result type:
 type Result<T> = ::std::result::Result<T, Box<dyn error::Error>>;
 
 pub struct Args {
@@ -78,7 +78,8 @@ impl Loading {
         }
     }
 
-    // Builder Pattern:
+    // Use Builder Pattern to configure Loading instance
+    // e.g. Loading::new().clear().chars("++-");
     pub fn clear(&mut self) {
         self.clear = true;
     }
@@ -104,7 +105,7 @@ impl Loading {
         self.thread = Some(tx);
 
         thread::spawn(move || loop {
-            // allow termination of progress bar thread by parent Loading instance:
+            // Allow termination of progress bar thread by parent Loading instance:
             match rx.try_recv() {
                 Ok(_) | Err(TryRecvError::Disconnected) => {
                     if clear {
@@ -133,7 +134,8 @@ impl Loading {
         self.eta = self.timer.elapsed();
         self.delay = Duration::from_millis(((self.eta.as_millis() as f64) / 100.0).round() as u64);
         if let Some(tx) = &self.thread {
-            let _ = tx.send(()); // finish progress bar and terminate thread if still running
+            // Finish progress bar and terminate thread if still running:
+            let _ = tx.send(());
         }
     }
 }
