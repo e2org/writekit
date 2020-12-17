@@ -4,10 +4,10 @@ use std::fmt;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::thread::sleep;
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, Instant};
 
-use indicatif::ProgressBar;
+use indicatif::{ProgressBar, ProgressStyle};
 
 // Standard "error-boxing" Result type.
 type Result<T> = ::std::result::Result<T, Box<dyn error::Error>>;
@@ -54,24 +54,64 @@ impl Args {
     }
 }
 
+pub struct Loading {
+    eta: Duration,
+    delay: Duration,
+    timer: Instant,
+}
+
+impl Loading {
+    pub fn new() -> Loading {
+        Loading {
+            eta: Duration::from_millis(10_000),
+            delay: Duration::from_millis(100),
+            timer: Instant::now(),
+        }
+    }
+
+    pub fn start(&mut self) {
+        self.timer = Instant::now(); // reset timer
+        let delay = self.delay;
+        thread::spawn(move || {
+            let bar = ProgressBar::new(100).with_style(
+                ProgressStyle::default_bar()
+                    .template("{wide_bar:.cyan/blue}")
+                    .progress_chars("::."),
+            );
+            loop {
+                bar.inc(1);
+                if bar.position() >= 100 {
+                    bar.finish();
+                    break;
+                }
+                thread::sleep(delay);
+            }
+        });
+    }
+
+    pub fn finish(&mut self) {
+        self.eta = self.timer.elapsed();
+        self.delay = Duration::from_millis(((self.eta.as_millis() as f64) / 100.0).round() as u64);
+    }
+}
+
 // Use strum to allow Converter enum to map to conversion CLI commands:
 // https://docs.rs/strum/0.20.0/strum/
 #[derive(strum_macros::Display)]
 enum Converter {
     #[strum(serialize = "pandoc")]
-    Pandoc,
+    MarkdownToHtml,
     #[strum(serialize = "asciidoctor")]
-    Asciidoctor,
+    AsciidocToHtml,
     #[strum(serialize = "wkhtmltopdf")]
-    WkHtmlToPdf,
+    HtmlToPdf,
     #[strum(serialize = "wkhtmltoimage")]
-    WkHtmlToImage,
+    HtmlToPng,
 }
 
 pub fn handle_write(
     path: &PathBuf,
-    loading: &ProgressBar,
-    eta: &Duration,
+    loading: &mut Loading,
     display: bool,
     verbose: bool,
     quiet: bool,
@@ -79,41 +119,49 @@ pub fn handle_write(
     if let Some(ext) = path.extension() {
         match ext.to_str() {
             Some("md") => {
+                loading.start();
+
                 let mut outhtml = path.clone();
                 outhtml.set_extension("html");
-                handle_proc(
-                    convert(Converter::Pandoc, &path, &outhtml, display, verbose, quiet)?,
-                    Converter::Pandoc,
-                    loading,
-                    eta,
-                    verbose,
-                    quiet,
-                );
-            }
-            Some("adoc") => {
-                let mut outhtml = path.clone();
-                outhtml.set_extension("html");
+
                 handle_proc(
                     convert(
-                        Converter::Asciidoctor,
+                        Converter::MarkdownToHtml,
                         &path,
                         &outhtml,
                         display,
                         verbose,
                         quiet,
                     )?,
-                    Converter::Asciidoctor,
-                    loading,
-                    eta,
+                    Converter::MarkdownToHtml,
                     verbose,
-                    quiet,
+                );
+            }
+            Some("adoc") => {
+                loading.start();
+
+                let mut outhtml = path.clone();
+                outhtml.set_extension("html");
+
+                handle_proc(
+                    convert(
+                        Converter::AsciidocToHtml,
+                        &path,
+                        &outhtml,
+                        display,
+                        verbose,
+                        quiet,
+                    )?,
+                    Converter::AsciidocToHtml,
+                    verbose,
                 );
             }
             Some("html") => {
                 let mut outpdf = path.clone();
                 outpdf.set_extension("pdf");
+
                 let proc_pdf = convert(
-                    Converter::WkHtmlToPdf,
+                    Converter::HtmlToPdf,
                     &path,
                     &outpdf,
                     display,
@@ -123,8 +171,9 @@ pub fn handle_write(
 
                 let mut outpng = path.clone();
                 outpng.set_extension("png");
+
                 let proc_png = convert(
-                    Converter::WkHtmlToImage,
+                    Converter::HtmlToPng,
                     &path,
                     &outpng,
                     display,
@@ -137,22 +186,8 @@ pub fn handle_write(
                     println!("");
                 }
 
-                handle_proc(
-                    proc_pdf,
-                    Converter::WkHtmlToPdf,
-                    loading,
-                    eta,
-                    verbose,
-                    quiet,
-                );
-                handle_proc(
-                    proc_png,
-                    Converter::WkHtmlToImage,
-                    loading,
-                    eta,
-                    verbose,
-                    quiet,
-                );
+                handle_proc(proc_pdf, Converter::HtmlToPdf, verbose);
+                handle_proc(proc_png, Converter::HtmlToPng, verbose);
             }
             Some("png") => {
                 if !quiet {
@@ -169,58 +204,32 @@ pub fn handle_write(
     Ok(())
 }
 
-fn handle_proc(
-    mut proc: Child,
-    converter: Converter,
-    loading: &ProgressBar,
-    eta: &Duration,
-    verbose: bool,
-    quiet: bool,
-) {
-    if !quiet {
-        let eta_ms = eta.as_millis();
-        let delay = Duration::from_millis(if eta_ms > 0 {
-            // 0.8 - adjust by factor based on observation
-            ((eta_ms as f64) / 100.0 * 0.8).round() as u64
-        } else {
-            100
-        });
-        loop {
-            if loading.position() < 100 {
-                loading.inc(1);
-            }
-            if let Ok(Some(_status)) = &proc.try_wait() {
-                break;
-            }
-            sleep(delay);
+fn handle_proc(proc: Child, converter: Converter, verbose: bool) {
+    if verbose {
+        if let Some(stdout) = proc.stdout {
+            BufReader::new(stdout).lines().for_each(|line| {
+                println!(". . . {} [stdout] . . .", converter.to_string());
+                println!(
+                    "{}",
+                    line.unwrap_or_else(|_| format!(
+                        "error: failed to process stdout for {}",
+                        converter.to_string()
+                    ))
+                );
+            });
         }
 
-        if verbose {
-            if let Some(stdout) = proc.stdout {
-                BufReader::new(stdout).lines().for_each(|line| {
-                    println!(". . . {} [stdout] . . .", converter.to_string());
-                    println!(
-                        "{}",
-                        line.unwrap_or_else(|_| format!(
-                            "error: failed to process stdout for {}",
-                            converter.to_string()
-                        ))
-                    );
-                });
-            }
-
-            if let Some(stderr) = proc.stderr {
-                BufReader::new(stderr).lines().for_each(|line| {
-                    println!(". . . {} [stderr] . . .", converter.to_string());
-                    println!(
-                        "{}",
-                        line.unwrap_or_else(|_| format!(
-                            "error: failed to process stderr for {}",
-                            converter.to_string()
-                        ))
-                    );
-                });
-            }
+        if let Some(stderr) = proc.stderr {
+            BufReader::new(stderr).lines().for_each(|line| {
+                println!(". . . {} [stderr] . . .", converter.to_string());
+                println!(
+                    "{}",
+                    line.unwrap_or_else(|_| format!(
+                        "error: failed to process stderr for {}",
+                        converter.to_string()
+                    ))
+                );
+            });
         }
     }
 }
@@ -242,12 +251,12 @@ fn convert(
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     match converter {
-        Converter::Pandoc | Converter::Asciidoctor => {
+        Converter::MarkdownToHtml | Converter::AsciidocToHtml => {
             if verbose {
                 command.arg("--verbose");
             }
         }
-        Converter::WkHtmlToPdf | Converter::WkHtmlToImage => {
+        Converter::HtmlToPdf | Converter::HtmlToPng => {
             if !verbose {
                 command.arg("--log-level").arg("none");
             }
@@ -257,13 +266,13 @@ fn convert(
     let proc: Child;
 
     match converter {
-        Converter::Pandoc => {
+        Converter::MarkdownToHtml => {
             proc = command.arg(input).arg("-o").arg(output).spawn()?;
         }
-        Converter::Asciidoctor => {
+        Converter::AsciidocToHtml => {
             proc = command.arg(input).spawn()?;
         }
-        Converter::WkHtmlToPdf | Converter::WkHtmlToImage => {
+        Converter::HtmlToPdf | Converter::HtmlToPng => {
             proc = command.arg(input).arg(output).spawn()?;
         }
     }
