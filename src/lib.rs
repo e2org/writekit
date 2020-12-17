@@ -60,6 +60,9 @@ pub struct Loading {
     delay: Duration,
     timer: Instant,
     thread: Option<Sender<()>>,
+    clear: bool,
+    chars: String,
+    template: String,
 }
 
 impl Loading {
@@ -69,38 +72,60 @@ impl Loading {
             delay: Duration::from_millis(100),
             timer: Instant::now(),
             thread: None,
+            clear: false,
+            chars: "''`".to_string(),
+            template: "{wide_bar:.cyan/blue}".to_string(), // wide_bar : expand to width of screen/pane
         }
+    }
+
+    // Builder Pattern:
+    pub fn clear(&mut self) {
+        self.clear = true;
+    }
+    pub fn chars(&mut self, chars: String) {
+        self.chars = chars;
+    }
+    pub fn template(&mut self, template: String) {
+        self.template = template;
     }
 
     pub fn start(&mut self) {
         self.timer = Instant::now(); // reset timer
 
         let delay = self.delay;
+        let clear = self.clear;
+        let bar = ProgressBar::new(100).with_style(
+            ProgressStyle::default_bar()
+                .progress_chars(&self.chars)
+                .template(&self.template),
+        );
+
         let (tx, rx): (Sender<()>, Receiver<()>) = mpsc::channel();
         self.thread = Some(tx);
 
-        thread::spawn(move || {
-            let bar = ProgressBar::new(100).with_style(
-                ProgressStyle::default_bar()
-                    .template("{wide_bar:.cyan/blue}")
-                    .progress_chars("``'"),
-            );
-            loop {
-                // allow termination of progress bar thread by parent Loading instance:
-                match rx.try_recv() {
-                    Ok(_) | Err(TryRecvError::Disconnected) => {
+        thread::spawn(move || loop {
+            // allow termination of progress bar thread by parent Loading instance:
+            match rx.try_recv() {
+                Ok(_) | Err(TryRecvError::Disconnected) => {
+                    if clear {
                         bar.finish_and_clear();
-                        break;
+                    } else {
+                        bar.finish();
                     }
-                    _ => (),
-                }
-                bar.inc(1);
-                if bar.position() >= 100 {
-                    bar.finish();
                     break;
                 }
-                thread::sleep(delay);
+                _ => (),
             }
+            bar.inc(1);
+            if bar.position() >= 100 {
+                if clear {
+                    bar.finish_and_clear();
+                } else {
+                    bar.finish();
+                }
+                break;
+            }
+            thread::sleep(delay);
         });
     }
 
@@ -108,7 +133,7 @@ impl Loading {
         self.eta = self.timer.elapsed();
         self.delay = Duration::from_millis(((self.eta.as_millis() as f64) / 100.0).round() as u64);
         if let Some(tx) = &self.thread {
-            let _ = tx.send(()); // terminate progress bar thread if still running
+            let _ = tx.send(()); // finish progress bar and terminate thread if still running
         }
     }
 }
