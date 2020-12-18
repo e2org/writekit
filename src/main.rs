@@ -61,7 +61,7 @@ fn main() {
         .watch(args.target, RecursiveMode::Recursive)
         .unwrap_or_else(|error| panic!("error: {:?}", error));
 
-    let mut loading = Loading::new();
+    let mut loading = Loading::new().clear();
     loop {
         match rx.recv() {
             Ok(event) => {

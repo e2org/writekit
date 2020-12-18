@@ -55,39 +55,42 @@ impl Args {
     }
 }
 
-pub struct Loading {
+pub struct Loading<'a> {
     eta: Duration,
     delay: Duration,
     timer: Instant,
     thread: Option<Sender<()>>,
     clear: bool,
-    chars: String,
-    template: String,
+    chars: &'a str,
+    template: &'a str,
 }
 
-impl Loading {
-    pub fn new() -> Loading {
+impl<'a> Loading<'a> {
+    pub fn new() -> Loading<'a> {
         Loading {
             eta: Duration::from_millis(10_000),
             delay: Duration::from_millis(100),
             timer: Instant::now(),
             thread: None,
             clear: false,
-            chars: "''`".to_string(),
-            template: "{wide_bar:.cyan/blue}".to_string(), // wide_bar : expand to width of screen/pane
+            chars: "``'",
+            template: "{wide_bar:.cyan/blue}", // wide_bar : expand to width of screen/pane
         }
     }
 
     // Use Builder Pattern to configure Loading instance
     // e.g. Loading::new().clear().chars("++-");
-    pub fn clear(&mut self) {
+    pub fn clear(mut self) -> Loading<'a> {
         self.clear = true;
+        self // chainable
     }
-    pub fn chars(&mut self, chars: String) {
+    pub fn chars(mut self, chars: &'static str) -> Loading<'a> {
         self.chars = chars;
+        self // chainable
     }
-    pub fn template(&mut self, template: String) {
+    pub fn template(mut self, template: &'static str) -> Loading<'a> {
         self.template = template;
+        self // chainable
     }
 
     pub fn start(&mut self) {
