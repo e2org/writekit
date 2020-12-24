@@ -2,13 +2,14 @@ use std::env;
 use std::error;
 use std::fmt;
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use indicatif::{ProgressBar, ProgressStyle};
+use notify::{self, DebouncedEvent as Event, FsEventWatcher, RecursiveMode, Watcher};
 
 // Standard "error-boxing" Result type:
 type Result<T> = ::std::result::Result<T, Box<dyn error::Error>>;
@@ -24,7 +25,7 @@ impl fmt::Display for Args {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "options: target='{}' display={} verbose={} quiet={}",
+            "Arguments: target='{}' display={} verbose={} quiet={}",
             self.target.display(),
             self.display,
             self.verbose,
@@ -74,7 +75,7 @@ impl<'a> Loading<'a> {
             thread: None,
             clear: false,
             chars: "``'",
-            template: "{wide_bar:.cyan/blue}", // wide_bar : expand to width of screen/pane
+            template: "{wide_bar:.cyan/blue}", // wide_bar : expand to pane width
         }
     }
 
@@ -84,11 +85,11 @@ impl<'a> Loading<'a> {
         self.clear = true;
         self // chainable
     }
-    pub fn chars(mut self, chars: &'static str) -> Loading<'a> {
+    pub fn chars(mut self, chars: &'a str) -> Loading<'a> {
         self.chars = chars;
         self // chainable
     }
-    pub fn template(mut self, template: &'static str) -> Loading<'a> {
+    pub fn template(mut self, template: &'a str) -> Loading<'a> {
         self.template = template;
         self // chainable
     }
@@ -139,6 +140,62 @@ impl<'a> Loading<'a> {
         if let Some(tx) = &self.thread {
             // Finish progress bar and terminate thread if still running:
             let _ = tx.send(());
+        }
+    }
+}
+
+pub struct Monitor {
+    rx: Receiver<Event>,
+    watcher: FsEventWatcher,
+    paths: Vec<PathBuf>,
+}
+
+impl Monitor {
+    pub fn new(debounce_ms: u64) -> Result<Monitor> {
+        // Create a channel to communicate with Notify watcher:
+        let (tx, rx) = mpsc::channel();
+        let debounce = Duration::from_millis(debounce_ms);
+        let watcher = notify::watcher(tx, debounce)?;
+        Ok(Monitor {
+            rx,
+            watcher,
+            paths: vec![],
+        })
+    }
+
+    // Use Builder Pattern to configure Monitor instance
+    // e.g. Monitor::new(1_000).path("~/notes").watch(|event_result| match event_result { ... );
+    pub fn path<P: AsRef<Path>>(mut self, path: P) -> Monitor {
+        // Generic P: accept PathBuf or &str (and convert to PathBuf)
+        self.paths.push([path].iter().collect());
+        self
+    }
+
+    pub fn watch<F: Fn(Result<Event>)>(mut self, handler: F) -> Result<()> {
+        // Watch for file changes in target directory via Notify:
+        // https://docs.rs/notify/4.0.10/notify
+
+        // Add paths to be watched:
+        // (all files/dirs at that path and below will be monitored)
+        for path in self.paths.iter() {
+            self.watcher.watch(path, RecursiveMode::Recursive)?;
+        }
+
+        loop {
+            let event_result = self.rx.recv();
+
+            if let Ok(ref event) = event_result {
+                if let Event::Create(ref path) = event {
+                    // New file created -- ensure it's watched:
+                    self.watcher.watch(path, RecursiveMode::Recursive)?;
+                }
+            }
+
+            match event_result {
+                Ok(event) => handler(Ok(event)),
+                Err(error) => handler(Err(error.into())),
+                // convert into boxed error
+            };
         }
     }
 }
