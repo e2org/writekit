@@ -24,10 +24,12 @@ fn main() {
             (about: DESCRIPTION)
             // Positional argument:
             (@arg TARGET: "directory or file to watch for changes")
+            // Keyword argument:
+            (@arg OUTDIR: -o --outdir +takes_value "optional output directory -- default: ./dist")
             // Boolean arguments (flags):
-            (@arg display: --display -d)
-            (@arg verbose: --verbose -v)
-            (@arg quiet: --quiet -q)
+            (@arg display: -d --display "continuously output images to terminal")
+            (@arg verbose: -v --verbose "output info/debugging output to terminal")
+            (@arg quiet: -q --quiet "suppress all output -- run silently")
         )
         // Args constructor accepts a clap::ArgMatches object:
         .get_matches(),
@@ -47,7 +49,7 @@ fn main() {
     // calls in closure below, so use mutex to safely manage mutable sharing.
     let loading_arc = Arc::new(Mutex::new(Loading::new().clear()));
 
-    Monitor::new(1_000) // debounce milliseconds
+    Monitor::new(1_000) // debo unce milliseconds
         // On Monitor initialization error -- panic to exit script:
         .unwrap_or_else(|error| panic!("error: {:?}", error))
         .path(&args.target)
@@ -65,6 +67,7 @@ fn main() {
                                 // Generate all downstream files from changed file:
                                 handle_write(
                                     &path,
+                                    &args.outdir,
                                     &mut loading,
                                     args.display,
                                     args.verbose,

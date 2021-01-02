@@ -1,6 +1,7 @@
 use std::env;
 use std::error;
 use std::fmt;
+use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -12,10 +13,11 @@ use indicatif::{ProgressBar, ProgressStyle};
 use notify::{self, DebouncedEvent as Event, FsEventWatcher, RecursiveMode, Watcher};
 
 // Standard "error-boxing" Result type:
-type Result<T> = ::std::result::Result<T, Box<dyn error::Error>>;
+type Result<T> = std::result::Result<T, Box<dyn error::Error>>;
 
 pub struct Args {
     pub target: PathBuf,
+    pub outdir: PathBuf,
     pub display: bool,
     pub verbose: bool,
     pub quiet: bool,
@@ -25,8 +27,9 @@ impl fmt::Display for Args {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "Arguments: target='{}' display={} verbose={} quiet={}",
+            "Arguments: target='{}' outdir='{}' display={} verbose={} quiet={}",
             self.target.display(),
+            self.outdir.display(),
             self.display,
             self.verbose,
             self.quiet
@@ -47,8 +50,27 @@ impl Args {
             None => env::current_dir()?,         // use current directory if available
         };
 
+        // Read "outdir" argument, a directory to output files into.
+        // If none provided, set to current directory (in which script was invoked).
+        let mut outdir = match matches.value_of("OUTDIR") {
+            Some(arg) => [arg].iter().collect(), // build PathBuf from arg string
+            None => {
+                // use current directory if available:
+                let mut path = env::current_dir()?;
+                path.push("dist");
+                path
+            }
+        };
+        // Get only "directory" portion of path if outdir points to a file:
+        if outdir.is_file() {
+            outdir.pop();
+        }
+        // Create outdir if it doesn't yet exist:
+        fs::create_dir_all(&outdir)?;
+
         Ok(Args {
             target,
+            outdir,
             display,
             verbose,
             quiet,
@@ -164,7 +186,7 @@ impl Monitor {
     }
 
     // Use Builder Pattern to configure Monitor instance
-    // e.g. Monitor::new(1_000).path("~/notes").watch(|event_result| match event_result { ... );
+    // e.g. Monitor::new(1_000).path("~/notes").watch(|event_result| match event_result { ... });
     pub fn path<P: AsRef<Path>>(mut self, path: P) -> Monitor {
         // Generic P: accept PathBuf or &str (and convert to PathBuf)
         self.paths.push([path].iter().collect());
@@ -216,17 +238,19 @@ enum Converter {
 
 pub fn handle_write(
     path: &PathBuf,
+    outdir: &PathBuf,
     loading: &mut Loading,
     display: bool,
     verbose: bool,
     quiet: bool,
 ) -> Result<()> {
-    if let Some(ext) = path.extension() {
+    if let (Some(filename), Some(ext)) = (path.file_name(), path.extension()) {
         match ext.to_str() {
             Some("md") => {
                 loading.start();
 
-                let mut outhtml = path.clone();
+                let mut outhtml = outdir.clone();
+                outhtml.push(filename);
                 outhtml.set_extension("html");
 
                 handle_proc(
@@ -245,7 +269,8 @@ pub fn handle_write(
             Some("adoc") => {
                 loading.start();
 
-                let mut outhtml = path.clone();
+                let mut outhtml = outdir.clone();
+                outhtml.push(filename);
                 outhtml.set_extension("html");
 
                 handle_proc(
@@ -262,7 +287,8 @@ pub fn handle_write(
                 );
             }
             Some("html") => {
-                let mut outpdf = path.clone();
+                let mut outpdf = outdir.clone();
+                outpdf.push(filename);
                 outpdf.set_extension("pdf");
 
                 let proc_pdf = convert(
@@ -274,7 +300,8 @@ pub fn handle_write(
                     quiet,
                 )?;
 
-                let mut outpng = path.clone();
+                let mut outpng = outdir.clone();
+                outpng.push(filename);
                 outpng.set_extension("png");
 
                 let proc_png = convert(
@@ -352,35 +379,20 @@ fn convert(
     }
 
     let mut command = Command::new(converter.to_string());
-
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-    match converter {
+    Ok(match converter {
         Converter::MarkdownToHtml | Converter::AsciidocToHtml => {
             if verbose {
                 command.arg("--verbose");
             }
+            command.arg(input).arg("-o").arg(output).spawn()?
         }
         Converter::HtmlToPdf | Converter::HtmlToPng => {
             if !verbose {
                 command.arg("--log-level").arg("none");
             }
+            command.arg(input).arg(output).spawn()?
         }
-    }
-
-    let proc: Child;
-
-    match converter {
-        Converter::MarkdownToHtml => {
-            proc = command.arg(input).arg("-o").arg(output).spawn()?;
-        }
-        Converter::AsciidocToHtml => {
-            proc = command.arg(input).spawn()?;
-        }
-        Converter::HtmlToPdf | Converter::HtmlToPng => {
-            proc = command.arg(input).arg(output).spawn()?;
-        }
-    }
-
-    Ok(proc)
+    })
 }
